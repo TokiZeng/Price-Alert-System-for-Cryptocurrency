@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>幣價漲跌警報器</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        #alert {
+            color: red;
+            font-weight: bold;
+        }
+        .price-up {
+            color: green;
+        }
+        .price-down {
+            color: red;
+        }
+        .price-neutral {
+            color: black;
+        }
+    </style>
+</head>
+<body>
+    <h1>幣價漲跌警報器</h1>
+    <p>交易對： 
+        <select id="symbol">
+            <option value="BTCUSDT">BTCUSDT</option>
+            <option value="ETHUSDT">ETHUSDT</option>
+        </select>
+    </p>
+    <p>閾值：<input type="number" id="thresholdInput" value="0.2" step="0.01" min="0.01"/>%</p>
+    <p>當前價格：<span id="currentPrice" class="price-neutral">-</span></p>
+    <p>價格變化：<span id="priceChange" class="price-neutral">-</span></p>
+    <p>前一分鐘價格：<span id="previousMinutePrice" class="price-neutral">-</span></p>
+    <p>兩分鐘前的價格：<span id="twoMinutesAgoPrice" class="price-neutral">-</span></p>
+    <p>當日最高價：<span id="highPrice" class="price-neutral">-</span></p>
+    <p>當日最低價：<span id="lowPrice" class="price-neutral">-</span></p>
+    <p id="alert"></p>
+    <audio id="alertSound" src="bbb.mp3" preload="auto"></audio>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            let SYMBOL = document.getElementById('symbol').value;
+            const API_URL_BASE = 'https://api.binance.com/api/v3/ticker/price?symbol=';
+            const API_STATS_URL_BASE = 'https://api.binance.com/api/v3/ticker/24hr?symbol=';
+
+            const currentPriceElem = document.getElementById('currentPrice');
+            const priceChangeElem = document.getElementById('priceChange');
+            const previousMinutePriceElem = document.getElementById('previousMinutePrice');
+            const twoMinutesAgoPriceElem = document.getElementById('twoMinutesAgoPrice');
+            const highPriceElem = document.getElementById('highPrice');
+            const lowPriceElem = document.getElementById('lowPrice');
+            const alertElem = document.getElementById('alert');
+            const alertSound = document.getElementById('alertSound');
+            const thresholdInput = document.getElementById('thresholdInput');
+
+            let previousPrice = null;
+            let previousMinutePrice = null;
+            let twoMinutesAgoPrice = null;
+
+            async function getCurrentPrice(symbol) {
+                try {
+                    const response = await fetch(API_URL_BASE + symbol);
+                    const data = await response.json();
+                    return parseFloat(data.price);
+                } catch (error) {
+                    console.error('Error fetching price:', error);
+                    return null;
+                }
+            }
+
+            async function get24hrStats(symbol) {
+                try {
+                    const response = await fetch(API_STATS_URL_BASE + symbol);
+                    const data = await response.json();
+                    console.log('Fetched 24hr stats:', data);
+                    return { highPrice: parseFloat(data.highPrice), lowPrice: parseFloat(data.lowPrice) };
+                } catch (error) {
+                    console.error('Error fetching 24hr stats:', error);
+                    return { highPrice: null, lowPrice: null };
+                }
+            }
+
+            function updatePriceDisplay(element, value, previousValue) {
+                element.textContent = value.toFixed(3);
+                if (previousValue !== null) {
+                    if (value > previousValue) {
+                        element.classList.remove('price-neutral', 'price-down');
+                        element.classList.add('price-up');
+                    } else if (value < previousValue) {
+                        element.classList.remove('price-neutral', 'price-up');
+                        element.classList.add('price-down');
+                    } else {
+                        element.classList.remove('price-up', 'price-down');
+                        element.classList.add('price-neutral');
+                    }
+                } else {
+                    element.classList.add('price-neutral');
+                }
+            }
+
+            function updateChangeDisplay(element, change) {
+                element.textContent = (change * 100).toFixed(3) + '%';
+                if (change > 0) {
+                    element.classList.remove('price-neutral', 'price-down');
+                    element.classList.add('price-up');
+                } else if (change < 0) {
+                    element.classList.remove('price-neutral', 'price-up');
+                    element.classList.add('price-down');
+                } else {
+                    element.classList.remove('price-up', 'price-down');
+                    element.classList.add('price-neutral');
+                }
+            }
+
+            async function checkPriceChange() {
+                SYMBOL = document.getElementById('symbol').value;
+                const currentPrice = await getCurrentPrice(SYMBOL);
+                if (currentPrice === null) return;
+
+                updatePriceDisplay(currentPriceElem, currentPrice, previousMinutePrice);
+
+                if (previousMinutePrice !== null) {
+                    const priceChange = (currentPrice - previousMinutePrice) / previousMinutePrice;
+                    updateChangeDisplay(priceChangeElem, priceChange);
+
+                    const threshold = parseFloat(thresholdInput.value) / 100;
+
+                    if (Math.abs(priceChange) >= threshold) {
+                        alertElem.textContent = `警報：價格變動超過${(threshold * 100).toFixed(3)}%，當前變動為 ${(priceChange * 100).toFixed(3)}%`;
+                        alertSound.play();
+                    } else {
+                        alertElem.textContent = '';
+                    }
+                }
+
+                previousPrice = currentPrice;
+            }
+
+            async function updatePrices() {
+                SYMBOL = document.getElementById('symbol').value;
+                const newPrice = await getCurrentPrice(SYMBOL);
+                if (newPrice !== null) {
+                    if (previousMinutePrice !== null) {
+                        twoMinutesAgoPrice = previousMinutePriceElem.textContent !== '-' ? parseFloat(previousMinutePriceElem.textContent) : null;
+                        updatePriceDisplay(twoMinutesAgoPriceElem, twoMinutesAgoPrice, null);
+                    }
+                    previousMinutePrice = newPrice;
+                    updatePriceDisplay(previousMinutePriceElem, previousMinutePrice, twoMinutesAgoPrice);
+                }
+            }
+
+            async function updateDailyStats() {
+                SYMBOL = document.getElementById('symbol').value;
+                const stats = await get24hrStats(SYMBOL);
+                if (stats.highPrice !== null && stats.lowPrice !== null) {
+                    highPriceElem.textContent = stats.highPrice.toFixed(3);
+                    lowPriceElem.textContent = stats.lowPrice.toFixed(3);
+                }
+            }
+
+            document.getElementById('symbol').addEventListener('change', () => {
+                previousPrice = null;
+                previousMinutePrice = null;
+                twoMinutesAgoPrice = null;
+                currentPriceElem.textContent = '-';
+                priceChangeElem.textContent = '-';
+                previousMinutePriceElem.textContent = '-';
+                twoMinutesAgoPriceElem.textContent = '-';
+                highPriceElem.textContent = '-';
+                lowPriceElem.textContent = '-';
+                alertElem.textContent = '';
+                updateDailyStats();
+            });
+
+            setInterval(checkPriceChange, 1000);  // 每秒運行一次
+            setInterval(updatePrices, 60000);  // 每分鐘運行一次
+            setInterval(updateDailyStats, 60000);  // 每分鐘更新一次當日最高價和最低價
+
+            checkPriceChange();  // 初始運行一次
+            updatePrices();  // 初始運行一次
+            updateDailyStats();  // 初始運行一次
+        });
+    </script>
+</body>
+</html>
